@@ -1,0 +1,9 @@
+[build]
+builder = "DOCKERFILE"
+watchPatterns = ["go.mod", "go.sum", "main.go", "index.html"]
+dockerfilePath = "Dockerfile"
+
+[deploy]
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
