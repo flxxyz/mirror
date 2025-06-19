@@ -27,6 +27,7 @@ const (
 	userAgent               = "Mirror (+https://github.com/flxxyz/mirror)"
 	originalGistURL         = "https://gist.github.com/"
 	originalGithubAssetsURL = "https://github.githubassets.com/"
+	originalDouyuURL        = "https://open.douyucdn.cn/"
 )
 
 var (
@@ -94,6 +95,17 @@ func main() {
 
 			uri, _ := url.Parse(originalGithubAssetsURL)
 			uri.Path = filepath.Join(srcDir, filename)
+
+			response(r.Context(), uri, w)
+		})
+	})
+
+	r.Route("/douyu", func(r chi.Router) {
+		r.Get("/api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
+			roomID := chi.URLParam(r, "roomid")
+
+			uri, _ := url.Parse(originalDouyuURL)
+			uri.Path = fmt.Sprintf("/api/RoomApi/room/%s", roomID)
 
 			response(r.Context(), uri, w)
 		})
