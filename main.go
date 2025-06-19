@@ -42,7 +42,9 @@ func init() {
 	runtime.GOMAXPROCS(n) // Set GOMAXPROCS to one less than the number of CPUs
 
 	if validateURL(os.Getenv("SITE_URL")) {
-		githubAssetsURL = fmt.Sprintf("%s/githubassets/", os.Getenv("SITE_URL"))
+		u, _ := url.Parse(os.Getenv("SITE_URL"))
+		u.Path = "/githubassets/"
+		githubAssetsURL = u.String()
 	}
 	if validateURL(os.Getenv("HTTP_PROXY")) {
 		useProxy = true
@@ -117,8 +119,6 @@ func main() {
 
 // request fetches the content from the given URI and returns the content type and body.
 func request(ctx context.Context, uri *url.URL) (string, []byte, error) {
-	fmt.Println(uri.String())
-
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			var d net.Dialer
