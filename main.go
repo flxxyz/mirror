@@ -75,7 +75,9 @@ func main() {
 			uri.Path = filepath.Join(username, filename)
 
 			response(r.Context(), uri, w, func(buf *bytes.Buffer) {
-				bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, getOriginalURL(r).String(), -1)
+				uri := getOriginalURL(r)
+				uri.Path = "/githubassets/"
+				bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, uri.String(), -1)
 				buf.Truncate(0)
 				buf.WriteString(bodyString)
 			})
