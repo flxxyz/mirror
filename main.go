@@ -46,6 +46,7 @@ func init() {
 		u, _ := url.Parse(os.Getenv("SITE_URL"))
 		u.Path = "/githubassets/"
 		githubAssetsURL = u.String()
+
 	}
 	if validateURL(os.Getenv("HTTP_PROXY")) {
 		useProxy = true
@@ -108,6 +109,20 @@ func main() {
 			uri.Path = fmt.Sprintf("/api/RoomApi/room/%s", roomID)
 
 			response(r.Context(), uri, w)
+		})
+		r.Get("//api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
+			roomID := chi.URLParam(r, "roomid")
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			uri := &url.URL{
+				Scheme: scheme,
+				Host:   r.Host,
+				Path:   fmt.Sprintf("/douyu/api/RoomApi/room/%s", roomID),
+			}
+			w.Header().Set("Location", uri.String())
+			w.WriteHeader(http.StatusPermanentRedirect)
 		})
 	})
 
