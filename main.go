@@ -55,7 +55,6 @@ func main() {
 	r.Use(middleware.RequestSize(1 << 10)) // 1 KB request size limit
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
-	//r.Use(middleware.NoCache)
 	r.Use(middleware.Compress(5, "gzip", "deflate", "br"))
 	r.Use(middleware.Recoverer)
 
@@ -73,7 +72,6 @@ func main() {
 
 			// disable not ".js" extname
 			fileExt := filepath.Ext(filename)
-			fmt.Println(fileExt)
 			if fileExt != ".js" {
 				http.Error(w, "Not allowed", http.StatusForbidden)
 				return
