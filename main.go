@@ -31,8 +31,7 @@ const (
 )
 
 var (
-	githubAssetsURL = originalGithubAssetsURL
-	useProxy        bool
+	useProxy bool
 )
 
 func init() {
@@ -42,12 +41,6 @@ func init() {
 	}
 	runtime.GOMAXPROCS(n) // Set GOMAXPROCS to one less than the number of CPUs
 
-	if validateURL(os.Getenv("SITE_URL")) {
-		u, _ := url.Parse(os.Getenv("SITE_URL"))
-		u.Path = "/githubassets/"
-		githubAssetsURL = u.String()
-
-	}
 	if validateURL(os.Getenv("HTTP_PROXY")) {
 		useProxy = true
 	}
@@ -82,7 +75,7 @@ func main() {
 			uri.Path = filepath.Join(username, filename)
 
 			response(r.Context(), uri, w, func(buf *bytes.Buffer) {
-				bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, githubAssetsURL, -1)
+				bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, getOriginalURL(r).String(), -1)
 				buf.Truncate(0)
 				buf.WriteString(bodyString)
 			})
@@ -112,15 +105,8 @@ func main() {
 		})
 		r.Get("//api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
 			roomID := chi.URLParam(r, "roomid")
-			scheme := "http"
-			if r.TLS != nil {
-				scheme = "https"
-			}
-			uri := &url.URL{
-				Scheme: scheme,
-				Host:   r.Host,
-				Path:   fmt.Sprintf("/douyu/api/RoomApi/room/%s", roomID),
-			}
+			uri := getOriginalURL(r)
+			uri.Path = fmt.Sprintf("/douyu/api/RoomApi/room/%s", roomID)
 			w.Header().Set("Location", uri.String())
 			w.WriteHeader(http.StatusPermanentRedirect)
 		})
@@ -228,4 +214,15 @@ func validateURL(s string) bool {
 	}
 
 	return true
+}
+
+func getOriginalURL(r *http.Request) *url.URL {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return &url.URL{
+		Scheme: scheme,
+		Host:   r.Host,
+	}
 }
