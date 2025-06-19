@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,7 +32,28 @@ const (
 )
 
 var (
-	useProxy bool
+	useProxy      bool
+	disallowHosts = []string{
+		"localhost",
+		"192.168.",
+		"172.16.",
+		"172.17.",
+		"172.18.",
+		"172.19.",
+		"172.20.",
+		"172.21.",
+		"172.22.",
+		"172.23.",
+		"172.24.",
+		"172.25.",
+		"172.26.",
+		"172.27.",
+		"172.28.",
+		"172.29.",
+		"172.30.",
+		"172.31.",
+		"10.",
+	}
 )
 
 func init() {
@@ -226,9 +248,28 @@ func validateURL(s string) bool {
 
 func getOriginalURL(r *http.Request) *url.URL {
 	scheme := "http"
+
+	if !slices.ContainsFunc(disallowHosts, func(s string) bool {
+		return strings.HasPrefix(r.Host, s)
+	}) {
+		scheme = "https"
+	}
+
 	if r.TLS != nil {
 		scheme = "https"
 	}
+
+	if r.Referer() != "" {
+		referer, _ := url.Parse(r.Referer())
+		scheme = referer.Scheme
+	}
+
+	if s, ok := r.Header["X-Forwarded-Proto"]; ok {
+		if len(s) >= 1 {
+			scheme = s[0]
+		}
+	}
+
 	return &url.URL{
 		Scheme: scheme,
 		Host:   r.Host,
