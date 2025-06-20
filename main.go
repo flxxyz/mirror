@@ -61,7 +61,7 @@ var (
 		"172.31.",
 		"10.",
 	}
-	gistCache         = expirable.NewLRU[string, *ResponseCache](512, nil, time.Second*10)
+	gistCache         = expirable.NewLRU[string, *ResponseCache](512, nil, time.Minute*1)
 	githubassetsCache = expirable.NewLRU[string, *ResponseCache](16, nil, time.Minute*30)
 	douyuCache        = expirable.NewLRU[string, *ResponseCache](512, nil, time.Second*1)
 )
@@ -81,7 +81,8 @@ func init() {
 func main() {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Throttle(1000))
+	//r.Use(middleware.Heartbeat("/heartbeat"))
+	//r.Use(middleware.Throttle(1000))
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RequestSize(1 << 10)) // 1 KB request size limit
@@ -90,6 +91,15 @@ func main() {
 	r.Use(middleware.Compress(5, "image/jpeg", "image/png", "text/css", "text/javascript", "text/html", "application/json", "application/xml"))
 	r.Use(middleware.Recoverer)
 	r.Use(cors.AllowAll().Handler)
+	r.Use(func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set the Cache-Control header to allow caching for 24 hour
+			w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+			// set cross-origin-resource-policy
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			handler.ServeHTTP(w, r)
+		})
+	})
 
 	//r.Mount("/debug", middleware.Profiler())
 
@@ -281,6 +291,7 @@ func response(ctx context.Context, uri *url.URL, w http.ResponseWriter, hooks ..
 	}
 
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", buf.Len()))
 	_, err = w.Write(buf.Bytes())
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
