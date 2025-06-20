@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/go-chi/cors"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 //go:embed index.html
@@ -30,6 +32,11 @@ const (
 	originalGithubAssetsURL = "https://github.githubassets.com/"
 	originalDouyuURL        = "https://open.douyucdn.cn/"
 )
+
+type ResponseCache struct {
+	ContentType string
+	Body        []byte
+}
 
 var (
 	useProxy      bool
@@ -54,6 +61,9 @@ var (
 		"172.31.",
 		"10.",
 	}
+	gistCache         = expirable.NewLRU[string, *ResponseCache](512, nil, time.Second*10)
+	githubassetsCache = expirable.NewLRU[string, *ResponseCache](16, nil, time.Minute*30)
+	douyuCache        = expirable.NewLRU[string, *ResponseCache](512, nil, time.Second*1)
 )
 
 func init() {
@@ -77,8 +87,9 @@ func main() {
 	r.Use(middleware.RequestSize(1 << 10)) // 1 KB request size limit
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
-	r.Use(middleware.Compress(5, "gzip", "deflate", "br"))
+	r.Use(middleware.Compress(5, "image/jpeg", "image/png", "text/css", "text/javascript", "text/html", "application/json", "application/xml"))
 	r.Use(middleware.Recoverer)
+	r.Use(cors.AllowAll().Handler)
 
 	//r.Mount("/debug", middleware.Profiler())
 
@@ -102,13 +113,29 @@ func main() {
 			uri, _ := url.Parse(originalGistURL)
 			uri.Path = filepath.Join(username, filename)
 
-			response(r.Context(), uri, w, func(buf *bytes.Buffer) {
-				uri := getOriginalURL(r)
-				uri.Path = "/githubassets/"
-				bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, uri.String(), -1)
-				buf.Truncate(0)
-				buf.WriteString(bodyString)
-			})
+			if val, ok := gistCache.Get(uri.String()); ok {
+				w.Header().Set("Content-Type", val.ContentType)
+				w.Write(val.Body)
+				return
+			}
+
+			response(r.Context(), uri, w,
+				func(contentType string, buf *bytes.Buffer) {
+					uri := getOriginalURL(r)
+					uri.Path = "/githubassets/"
+					bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, uri.String(), -1)
+					buf.Truncate(0)
+					buf.WriteString(bodyString)
+				},
+				func(contentType string, buf *bytes.Buffer) {
+					lruKey := uri.String()
+					if !gistCache.Contains(lruKey) {
+						gistCache.Add(lruKey, &ResponseCache{
+							ContentType: contentType,
+							Body:        buf.Bytes(),
+						})
+					}
+				})
 		})
 	})
 
@@ -120,18 +147,48 @@ func main() {
 			uri, _ := url.Parse(originalGithubAssetsURL)
 			uri.Path = filepath.Join(srcDir, filename)
 
-			response(r.Context(), uri, w)
+			if val, ok := githubassetsCache.Get(uri.String()); ok {
+				w.Header().Set("Content-Type", val.ContentType)
+				w.Write(val.Body)
+				return
+			}
+
+			response(r.Context(), uri, w,
+				func(contentType string, buf *bytes.Buffer) {
+					lruKey := uri.String()
+					if !githubassetsCache.Contains(lruKey) {
+						githubassetsCache.Add(lruKey, &ResponseCache{
+							ContentType: contentType,
+							Body:        buf.Bytes(),
+						})
+					}
+				})
 		})
 	})
 
 	r.Route("/douyu", func(r chi.Router) {
-		r.Get("/api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
-			roomID := chi.URLParam(r, "roomid")
+		r.Get("/api/RoomApi/room/{roomID}", func(w http.ResponseWriter, r *http.Request) {
+			roomID := chi.URLParam(r, "roomID")
 
 			uri, _ := url.Parse(originalDouyuURL)
 			uri.Path = fmt.Sprintf("/api/RoomApi/room/%s", roomID)
 
-			response(r.Context(), uri, w)
+			if val, ok := douyuCache.Get(uri.String()); ok {
+				w.Header().Set("Content-Type", val.ContentType)
+				w.Write(val.Body)
+				return
+			}
+
+			response(r.Context(), uri, w,
+				func(contentType string, buf *bytes.Buffer) {
+					lruKey := uri.String()
+					if !douyuCache.Contains(lruKey) {
+						douyuCache.Add(lruKey, &ResponseCache{
+							ContentType: contentType,
+							Body:        buf.Bytes(),
+						})
+					}
+				})
 		})
 		r.Get("//api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
 			roomID := chi.URLParam(r, "roomid")
@@ -208,7 +265,7 @@ func request(ctx context.Context, uri *url.URL) (string, []byte, error) {
 }
 
 // response handles the HTTP response for the given URI.
-func response(ctx context.Context, uri *url.URL, w http.ResponseWriter, hooks ...func(*bytes.Buffer)) {
+func response(ctx context.Context, uri *url.URL, w http.ResponseWriter, hooks ...func(contentType string, buf *bytes.Buffer)) {
 	contentType, body, err := request(ctx, uri)
 	if err != nil {
 		http.Error(w, "Failed to fetch the resource", http.StatusInternalServerError)
@@ -219,7 +276,7 @@ func response(ctx context.Context, uri *url.URL, w http.ResponseWriter, hooks ..
 
 	for _, hook := range hooks {
 		if hook != nil {
-			hook(buf)
+			hook(contentType, buf)
 		}
 	}
 
