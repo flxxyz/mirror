@@ -1,36 +1,32 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"github.com/go-chi/cors"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/hashicorp/golang-lru/v2/expirable"
+	_ "go.uber.org/automaxprocs"
 )
 
 //go:embed index.html
 var indexHTML []byte
 
 const (
-	userAgent               = "Mirror (+https://github.com/flxxyz/mirror)"
-	originalGistURL         = "https://gist.github.com/"
-	originalGithubAssetsURL = "https://github.githubassets.com/"
-	originalDouyuURL        = "https://open.douyucdn.cn/"
+	userAgent                    = "Mirror (+https://github.com/flxxyz/mirror)"
+	originalGistURL              = "https://gist.github.com/"
+	originalGithubAssetsURL      = "https://github.githubassets.com/"
+	originalGithubUserContentURL = "https://raw.githubusercontent.com/"
+	originalDouyuURL             = "https://open.douyucdn.cn/"
 )
 
 type ResponseCache struct {
@@ -62,9 +58,6 @@ var (
 		"10.",
 		"127.",
 	}
-	gistCache         = expirable.NewLRU[string, *ResponseCache](512, nil, time.Minute*1)
-	githubassetsCache = expirable.NewLRU[string, *ResponseCache](16, nil, time.Minute*30)
-	douyuCache        = expirable.NewLRU[string, *ResponseCache](512, nil, time.Second*1)
 )
 
 func init() {
@@ -76,6 +69,25 @@ func init() {
 
 	if validateURL(os.Getenv("HTTP_PROXY")) {
 		useProxy = true
+	}
+}
+
+func RedirectRoot(prefixes ...string) func(handler http.Handler) http.Handler {
+	return func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.RequestURI != "/" {
+				for _, prefix := range prefixes {
+					p := strings.TrimPrefix(r.RequestURI, prefix)
+					if p == "/" || p == "" {
+						originalURL := getOriginalURL(r)
+						http.Redirect(w, r, originalURL.String(), http.StatusPermanentRedirect)
+						return
+					}
+				}
+			}
+
+			handler.ServeHTTP(w, r)
+		})
 	}
 }
 
@@ -92,6 +104,7 @@ func main() {
 	r.Use(middleware.Compress(5, "image/jpeg", "image/png", "text/css", "text/javascript", "text/html", "application/json", "application/xml"))
 	r.Use(middleware.Recoverer)
 	r.Use(cors.AllowAll().Handler)
+	r.Use(RedirectRoot("/gist", "/githubassets", "/githubraw", "/douyu"))
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set the Cache-Control header to allow caching for 24 hour
@@ -105,7 +118,7 @@ func main() {
 	//r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set(HTTPHeaderContentType, "text/html; charset=utf-8")
 		w.Write(indexHTML)
 	})
 
@@ -124,29 +137,36 @@ func main() {
 			uri, _ := url.Parse(originalGistURL)
 			uri.Path = filepath.Join(username, filename)
 
-			if val, ok := gistCache.Get(uri.String()); ok {
-				w.Header().Set("Content-Type", val.ContentType)
-				w.Write(val.Body)
-				return
-			}
-
-			response(r.Context(), uri, w,
-				func(contentType string, buf *bytes.Buffer) {
-					uri := getOriginalURL(r)
-					uri.Path = "/githubassets/"
-					bodyString := strings.Replace(buf.String(), originalGithubAssetsURL, uri.String(), -1)
-					buf.Truncate(0)
-					buf.WriteString(bodyString)
+			mirror := &Mirror{
+				Uri:   uri,
+				Cache: gistCache,
+				AfterHooks: []func(ctx context.Context, m *Mirror){
+					func(ctx context.Context, m *Mirror) {
+						uri := getOriginalURL(r)
+						uri.Path = "/githubassets/"
+						bodyString := strings.Replace(m.Body.String(), originalGithubAssetsURL, uri.String(), -1)
+						m.Body.Truncate(0)
+						m.Body.WriteString(bodyString)
+					},
 				},
-				func(contentType string, buf *bytes.Buffer) {
-					lruKey := uri.String()
-					if !gistCache.Contains(lruKey) {
-						gistCache.Add(lruKey, &ResponseCache{
-							ContentType: contentType,
-							Body:        buf.Bytes(),
-						})
-					}
-				})
+			}
+			mirror.Response(r.Context(), w)
+		})
+
+		r.Get("/{username}/{gistID}/raw/{shaID}/{filename}", func(w http.ResponseWriter, r *http.Request) {
+			username := chi.URLParam(r, "username")
+			gistID := chi.URLParam(r, "gistID")
+			shaID := chi.URLParam(r, "shaID")
+			filename := chi.URLParam(r, "filename")
+
+			uri, _ := url.Parse(originalGistURL)
+			uri.Path = filepath.Join(username, gistID, "raw", shaID, filename)
+
+			mirror := &Mirror{
+				Uri:   uri,
+				Cache: gistCache,
+			}
+			mirror.Response(r.Context(), w)
 		})
 	})
 
@@ -158,22 +178,30 @@ func main() {
 			uri, _ := url.Parse(originalGithubAssetsURL)
 			uri.Path = filepath.Join(srcDir, filename)
 
-			if val, ok := githubassetsCache.Get(uri.String()); ok {
-				w.Header().Set("Content-Type", val.ContentType)
-				w.Write(val.Body)
-				return
+			mirror := &Mirror{
+				Uri:   uri,
+				Cache: githubassetsCache,
 			}
+			mirror.Response(r.Context(), w)
+		})
+	})
 
-			response(r.Context(), uri, w,
-				func(contentType string, buf *bytes.Buffer) {
-					lruKey := uri.String()
-					if !githubassetsCache.Contains(lruKey) {
-						githubassetsCache.Add(lruKey, &ResponseCache{
-							ContentType: contentType,
-							Body:        buf.Bytes(),
-						})
-					}
-				})
+	r.Route("/githubraw", func(r chi.Router) {
+		r.Get("/{username}/{repo}/*", func(w http.ResponseWriter, r *http.Request) {
+			username := chi.URLParam(r, "username")
+			repo := chi.URLParam(r, "repo")
+
+			requestURI := fmt.Sprintf("/githubraw/%s", filepath.Join(username, repo))
+			filename := strings.TrimPrefix(r.RequestURI, requestURI)
+
+			uri, _ := url.Parse(originalGithubUserContentURL)
+			uri.Path = filepath.Join(username, repo, filename)
+
+			mirror := &Mirror{
+				Uri:   uri,
+				Cache: githubrawCache,
+			}
+			mirror.Response(r.Context(), w)
 		})
 	})
 
@@ -184,29 +212,17 @@ func main() {
 			uri, _ := url.Parse(originalDouyuURL)
 			uri.Path = fmt.Sprintf("/api/RoomApi/room/%s", roomID)
 
-			if val, ok := douyuCache.Get(uri.String()); ok {
-				w.Header().Set("Content-Type", val.ContentType)
-				w.Write(val.Body)
-				return
+			mirror := &Mirror{
+				Uri:   uri,
+				Cache: douyuCache,
 			}
-
-			response(r.Context(), uri, w,
-				func(contentType string, buf *bytes.Buffer) {
-					lruKey := uri.String()
-					if !douyuCache.Contains(lruKey) {
-						douyuCache.Add(lruKey, &ResponseCache{
-							ContentType: contentType,
-							Body:        buf.Bytes(),
-						})
-					}
-				})
+			mirror.Response(r.Context(), w)
 		})
 		r.Get("//api/RoomApi/room/{roomid}", func(w http.ResponseWriter, r *http.Request) {
 			roomID := chi.URLParam(r, "roomid")
 			uri := getOriginalURL(r)
 			uri.Path = fmt.Sprintf("/douyu/api/RoomApi/room/%s", roomID)
-			w.Header().Set("Location", uri.String())
-			w.WriteHeader(http.StatusPermanentRedirect)
+			http.Redirect(w, r, uri.String(), http.StatusPermanentRedirect)
 		})
 	})
 
@@ -225,122 +241,5 @@ func main() {
 	// Start the HTTP server
 	if err := http.ListenAndServe(addr, r); err != nil {
 		panic(err)
-	}
-}
-
-// request fetches the content from the given URI and returns the content type and body.
-func request(ctx context.Context, uri *url.URL) (string, []byte, error) {
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "tcp", addr)
-		},
-	}
-
-	// 配置代理服务器
-	if useProxy {
-		proxyURL, err := url.Parse(os.Getenv("HTTP_PROXY"))
-		if err != nil {
-			return "", nil, nil
-		}
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	client := http.Client{
-		Transport: transport,
-	}
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, uri.String(), nil)
-
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", nil, err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, errors.New("Failed to fetch the resource: " + resp.Status)
-	}
-
-	// Process the body as needed
-	contentType := resp.Header.Get("Content-Type")
-
-	return contentType, body, nil
-}
-
-// response handles the HTTP response for the given URI.
-func response(ctx context.Context, uri *url.URL, w http.ResponseWriter, hooks ...func(contentType string, buf *bytes.Buffer)) {
-	contentType, body, err := request(ctx, uri)
-	if err != nil {
-		http.Error(w, "Failed to fetch the resource", http.StatusInternalServerError)
-		return
-	}
-
-	buf := bytes.NewBuffer(body)
-
-	for _, hook := range hooks {
-		if hook != nil {
-			hook(contentType, buf)
-		}
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", buf.Len()))
-	_, err = w.Write(buf.Bytes())
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-}
-
-// validateURL checks if the provided string is a valid URL.
-func validateURL(s string) bool {
-	if s == "" {
-		return false
-	}
-
-	_, err := url.Parse(s)
-	if err != nil {
-		// If the URL is invalid, print an error message and return false
-		return false
-	}
-
-	return true
-}
-
-func getOriginalURL(r *http.Request) *url.URL {
-	scheme := "http"
-
-	if !slices.ContainsFunc(disallowHosts, func(s string) bool {
-		return strings.HasPrefix(r.Host, s)
-	}) {
-		scheme = "https"
-	}
-
-	if r.TLS != nil {
-		scheme = "https"
-	}
-
-	if r.Referer() != "" {
-		referer, _ := url.Parse(r.Referer())
-		scheme = referer.Scheme
-	}
-
-	if s, ok := r.Header["X-Forwarded-Proto"]; ok {
-		if len(s) >= 1 {
-			scheme = s[0]
-		}
-	}
-
-	return &url.URL{
-		Scheme: scheme,
-		Host:   r.Host,
 	}
 }
