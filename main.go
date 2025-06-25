@@ -60,6 +60,7 @@ var (
 		"172.30.",
 		"172.31.",
 		"10.",
+		"127.",
 	}
 	gistCache         = expirable.NewLRU[string, *ResponseCache](512, nil, time.Minute*1)
 	githubassetsCache = expirable.NewLRU[string, *ResponseCache](16, nil, time.Minute*30)
@@ -109,9 +110,9 @@ func main() {
 	})
 
 	r.Route("/gist", func(r chi.Router) {
-		r.Get("/{username}/*", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/{username}/{filename}", func(w http.ResponseWriter, r *http.Request) {
 			username := chi.URLParam(r, "username")
-			filename := filepath.Base(r.RequestURI) // Get the filename from the request URI
+			filename := chi.URLParam(r, "filename")
 
 			// disable not ".js" extname
 			fileExt := filepath.Ext(filename)
