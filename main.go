@@ -75,9 +75,9 @@ func init() {
 func RedirectRoot(prefixes ...string) func(handler http.Handler) http.Handler {
 	return func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.RequestURI != "/" {
+			if r.URL.Path != "/" {
 				for _, prefix := range prefixes {
-					p := strings.TrimPrefix(r.RequestURI, prefix)
+					p := strings.TrimPrefix(r.URL.Path, prefix)
 					if p == "/" || p == "" {
 						originalURL := getOriginalURL(r)
 						http.Redirect(w, r, originalURL.String(), http.StatusPermanentRedirect)
@@ -104,7 +104,7 @@ func main() {
 	r.Use(middleware.Compress(5, "image/jpeg", "image/png", "text/css", "text/javascript", "text/html", "application/json", "application/xml"))
 	r.Use(middleware.Recoverer)
 	r.Use(cors.AllowAll().Handler)
-	r.Use(RedirectRoot("/gist", "/githubassets", "/githubraw", "/douyu"))
+	r.Use(RedirectRoot("/gist", "/gistraw", "/githubassets", "/githubraw", "/douyu"))
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set the Cache-Control header to allow caching for 24 hour
@@ -152,7 +152,9 @@ func main() {
 			}
 			mirror.Response(r.Context(), w)
 		})
+	})
 
+	r.Route("/gistraw", func(r chi.Router) {
 		r.Get("/{username}/{gistID}/raw/{shaID}/{filename}", func(w http.ResponseWriter, r *http.Request) {
 			username := chi.URLParam(r, "username")
 			gistID := chi.URLParam(r, "gistID")
@@ -171,12 +173,12 @@ func main() {
 	})
 
 	r.Route("/githubassets", func(r chi.Router) {
-		r.Get("/{src}/*", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 			srcDir := chi.URLParam(r, "src")
-			filename := filepath.Base(r.RequestURI) // Get the filename from the request URI
+			filename := strings.TrimPrefix(r.URL.Path, "/githubassets/")
 
 			uri, _ := url.Parse(originalGithubAssetsURL)
-			uri.Path = filepath.Join(srcDir, filename)
+			uri.Path, _ = url.JoinPath(srcDir, filename)
 
 			mirror := &Mirror{
 				Uri:   uri,
@@ -190,12 +192,10 @@ func main() {
 		r.Get("/{username}/{repo}/*", func(w http.ResponseWriter, r *http.Request) {
 			username := chi.URLParam(r, "username")
 			repo := chi.URLParam(r, "repo")
-
-			requestURI := fmt.Sprintf("/githubraw/%s", filepath.Join(username, repo))
-			filename := strings.TrimPrefix(r.RequestURI, requestURI)
+			filename := strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/githubraw/%s", filepath.Join(username, repo)))
 
 			uri, _ := url.Parse(originalGithubUserContentURL)
-			uri.Path = filepath.Join(username, repo, filename)
+			uri.Path, _ = url.JoinPath(username, repo, filename)
 
 			mirror := &Mirror{
 				Uri:   uri,
