@@ -1,1 +1,65 @@
-mirror
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mirror</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body>
+<div id="app">
+    <h1>Mirror</h1>
+    <div v-for="item in list" :key="item.name">
+        <div>
+            <a :href=`${item.name}${item.value}` target="_blank">{{ item.name }}</a>
+        </div>
+    </div>
+    <div>
+        Power by <a href="//github.com/flxxyz/mirror">flxxyz/mirror</a>
+    </div>
+</div>
+</body>
+<script>
+  const { createApp, ref } = Vue;
+
+  createApp({
+    data() {
+      return {
+        list: [
+          {
+            name: "/gist/",
+            value: "flxxyz/b338666ba7e8cd040b78e667976bf34a.js",
+          },
+          {
+            name: "/gistraw/",
+            value: "flxxyz/b7ec986055f06269960c1bdf7af66bec/raw/ce7a4ab952d67a13f8bd7c35ede4dfebb9219b9b/CheckIPvNSupport.go",
+          },
+          {
+            name: "/githubraw/",
+            value: "flxxyz/flxxyz/master/README.md",
+          },
+          {
+            name: "/githubassets/",
+            value: "apple-touch-icon-144x144.png",
+          },
+          {
+            name: "/douyu/",
+            value: "api/RoomApi/room/452628",
+          },
+          {
+            name: "/direct/",
+            value: "https://github.com/flxxyz/flxxyz/raw/refs/heads/master/README.md",
+          },
+        ],
+        count: 0
+      }
+    },
+    setup() {
+      const message = ref('Hello vue!');
+      return {
+        message,
+      }
+    }
+  }).mount('#app')
+</script>
+</html>

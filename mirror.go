@@ -11,13 +11,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 )
 
 var (
-	HTTPHeaderContentType   = "Content-Type"
-	HTTPHeaderContentLength = "Content-Length"
-	HTTPHeaderUserAgent     = "User-Agent"
-	HTTPHeaderMirrorCache   = "X-Mirror-Cache"
+	HTTPHeaderContentType        = "Content-Type"
+	HTTPHeaderContentLength      = "Content-Length"
+	HTTPHeaderContentDisposition = "Content-Disposition"
+	HTTPHeaderUserAgent          = "User-Agent"
+	HTTPHeaderMirrorCache        = "X-Mirror-Cache"
 
 	HTTPResponseCacheMISS = "MISS"
 	HTTPResponseCacheHIT  = "HIT"
@@ -35,11 +38,14 @@ type Mirror struct {
 
 func (m *Mirror) Response(ctx context.Context, w http.ResponseWriter) {
 	// directly return if the request is cache
-	if val, ok := m.Cache.Get(m.Uri.String()); ok {
+	if cacheVal, ok := m.Cache.Get(m.Uri.String()); ok {
 		w.Header().Set(HTTPHeaderMirrorCache, HTTPResponseCacheHIT)
-		w.Header().Set(HTTPHeaderContentType, val.ContentType)
-		w.Header().Set(HTTPHeaderContentLength, m.ContentLength)
-		_, _ = w.Write(val.Body)
+		w.Header().Set(HTTPHeaderContentType, cacheVal.ContentType)
+		w.Header().Set(HTTPHeaderContentLength, strconv.Itoa(len(cacheVal.Body)))
+		if strings.HasPrefix(cacheVal.ContentType, "text/") {
+			w.Header().Set(HTTPHeaderContentDisposition, "attachment")
+		}
+		_, _ = w.Write(cacheVal.Body)
 		return
 	}
 
@@ -82,6 +88,9 @@ func (m *Mirror) Response(ctx context.Context, w http.ResponseWriter) {
 	w.Header().Set(HTTPHeaderMirrorCache, HTTPResponseCacheMISS)
 	w.Header().Set(HTTPHeaderContentType, m.ContentType)
 	w.Header().Set(HTTPHeaderContentLength, m.ContentLength)
+	if strings.HasPrefix(m.ContentType, "text/") {
+		w.Header().Set(HTTPHeaderContentDisposition, "attachment")
+	}
 	_, err := w.Write(m.Body.Bytes())
 	if err != nil {
 		m.Cache.Remove(lruKey) // Remove from cache if write fails
@@ -109,6 +118,12 @@ func (m *Mirror) Fetch(ctx context.Context, uri *url.URL) error {
 	}
 
 	client := http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return http.ErrUseLastResponse // 防止无限重定向
+			}
+			return nil
+		},
 		Transport: transport,
 	}
 

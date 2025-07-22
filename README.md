@@ -4,9 +4,10 @@
 
 - [/douyu/](https://mirror.flxxyz.com/douyu/api/RoomApi/room/452628)
 - [/gist/](https://mirror.flxxyz.com/gist/flxxyz/b338666ba7e8cd040b78e667976bf34a.js)
-- [/githubraw/](https://mirror.flxxyz.com/githubraw/golang/go/master/README.md)
+- [/githubraw/](https://mirror.flxxyz.com/githubraw/flxxyz/flxxyz/master/README.md)
 - [/gistraw/](https://mirror.flxxyz.com/gistraw/flxxyz/b7ec986055f06269960c1bdf7af66bec/raw/ce7a4ab952d67a13f8bd7c35ede4dfebb9219b9b/CheckIPvNSupport.go)
 - [/githubassets/](https://mirror.flxxyz.com/githubassets/apple-touch-icon-144x144.png)
+- [/direct/](https://mirror.flxxyz.com/direct/https://github.com/flxxyz/flxxyz/raw/refs/heads/master/README.md)
 
 ## Environmental variable
 

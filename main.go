@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"github.com/go-chi/cors"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -58,6 +60,14 @@ var (
 		"10.",
 		"127.",
 	}
+	prefixes = []string{
+		"/gist",
+		"/gistraw",
+		"/githubassets",
+		"/githubraw",
+		"/douyu",
+		"/direct",
+	}
 )
 
 func init() {
@@ -104,7 +114,7 @@ func main() {
 	r.Use(middleware.Compress(5, "image/jpeg", "image/png", "text/css", "text/javascript", "text/html", "application/json", "application/xml"))
 	r.Use(middleware.Recoverer)
 	r.Use(cors.AllowAll().Handler)
-	r.Use(RedirectRoot("/gist", "/gistraw", "/githubassets", "/githubraw", "/douyu"))
+	r.Use(RedirectRoot(prefixes...))
 	r.Use(func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set the Cache-Control header to allow caching for 24 hour
@@ -120,6 +130,16 @@ func main() {
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(HTTPHeaderContentType, "text/html; charset=utf-8")
 		w.Write(indexHTML)
+	})
+
+	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(HTTPHeaderContentType, "text/plain; charset=utf-8")
+		buf := bytes.NewBufferString("User-agent: *\n")
+		for _, prefix := range prefixes {
+			buf.WriteString(fmt.Sprintf("Disallow: %s/\n", prefix))
+		}
+		buf.WriteString("Disallow: /")
+		w.Write(buf.Bytes())
 	})
 
 	r.Route("/gist", func(r chi.Router) {
@@ -223,6 +243,23 @@ func main() {
 			uri := getOriginalURL(r)
 			uri.Path = fmt.Sprintf("/douyu/api/RoomApi/room/%s", roomID)
 			http.Redirect(w, r, uri.String(), http.StatusPermanentRedirect)
+		})
+	})
+
+	r.Route("/direct", func(r chi.Router) {
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			u, err := url.Parse(strings.TrimPrefix(r.URL.Path, "/direct/"))
+			if err != nil {
+				log.Println("Error parsing URL:", err)
+				http.Error(w, "Invalid URL", http.StatusBadRequest)
+				return
+			}
+
+			mirror := &Mirror{
+				Uri:   u,
+				Cache: directCache,
+			}
+			mirror.Response(r.Context(), w)
 		})
 	})
 
