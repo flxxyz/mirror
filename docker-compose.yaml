@@ -1,0 +1,8 @@
+services:
+  mirror:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    network_mode: host
+    restart: unless-stopped
